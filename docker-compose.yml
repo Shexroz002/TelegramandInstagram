@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: social_media
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: sh23sh23
+    ports:
+      - "5432:5432"
+    networks:
+      - backend_network
+
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
+    networks:
+      - backend_network
+
+  rabbitmq:
+    image: "rabbitmq:management"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: shehrozbek
+      RABBITMQ_DEFAULT_PASS: shehroz2002
+    networks:
+      - backend_network
+
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/my_future
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    networks:
+      - backend_network
+
+  celery:
+    build: .
+    command: celery -A core_settings worker --loglevel=info
+    volumes:
+      - .:/my_future
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    networks:
+      - backend_network
+
+volumes:
+  postgres_data:
+
+networks:
+  backend_network:
+    driver: bridge
