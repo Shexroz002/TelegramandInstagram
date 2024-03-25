@@ -6,6 +6,7 @@ from .celery_task import create_post_task, update_post_task
 import base64
 import os
 
+
 class CreatePost(views.APIView):
     @staticmethod
     def get(request):
@@ -73,6 +74,21 @@ class GetUpdateDeletePost(views.APIView):
         return response.Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AllCommentGetFotPost(views.APIView):
+    @staticmethod
+    def get(request, post_id):
+        post = get_object_or_404(Post, id=post_id)
+        comments = post.get_comments()
+        serializer_data = CommentPostSerializer(comments, many=True)
+        data = {
+            "post": post.title,
+            "post_image": post.post_image.url,
+            "author": post.author.username,
+            "comments": serializer_data.data
+        }
+        return response.Response(data, status=status.HTTP_200_OK)
+
+
 class CreateComment(views.APIView):
     @staticmethod
     def post(request, post_id):
@@ -80,7 +96,7 @@ class CreateComment(views.APIView):
         serializer_data = CommentPostSerializer(data=request.data)
         if serializer_data.is_valid():
             serializer_data.save(user=request.user, post=post)
-            return response.Response(status=status.HTTP_201_CREATED)
+            return response.Response(serializer_data.data,status=status.HTTP_201_CREATED)
         else:
             return response.Response({"error": serializer_data.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -98,7 +114,7 @@ class GetUpdateDeleteComment(views.APIView):
         serializer_data = CommentPostSerializer(comment, data=request.data)
         if serializer_data.is_valid():
             serializer_data.save()
-            return response.Response(status=status.HTTP_200_OK)
+            return response.Response(serializer_data.data,status=status.HTTP_200_OK)
         else:
             return response.Response({"error": serializer_data.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -115,9 +131,10 @@ class LikePost(views.APIView):
         post = get_object_or_404(Post, id=post_id)
         if request.user in post.likes.all():
             post.likes.remove(request.user)
+            return response.Response(status=status.HTTP_400_BAD_REQUEST)
         else:
             post.likes.add(request.user)
-        return response.Response(status=status.HTTP_200_OK)
+            return response.Response(status=status.HTTP_200_OK)
 
 
 class SavedPostByUser(views.APIView):
@@ -145,3 +162,5 @@ class SavedPostGetAll(views.APIView):
         saved_post = SavedPost.objects.filter(user=request.user)
         serializer_data = SavedPostSerializer(saved_post, many=True)
         return response.Response(serializer_data.data)
+
+

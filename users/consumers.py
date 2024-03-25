@@ -2,7 +2,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from posts.models import Post
 from users.models import CustomUser, UserStory
-from users.serializers import StoryUserSerializer
+from users.serializers import StoryUserSerializer, UserForComments, SelfStorySerializers
 
 
 class UserInformationAboutSelf(AsyncJsonWebsocketConsumer):
@@ -154,8 +154,10 @@ class UserStoryByID(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def get_stories_by_id(self, user_id):
         try:
-            user = CustomUser.objects.get(id=user_id)
-            stories = UserStory.objects.filter(user=user)
+            # self_user = self.scope['user']
+            following_users = CustomUser.objects.get(id=user_id).following.all()
+            stories = UserStory.objects.filter(user=following_users).order_by('-created_at')[:5]
+            # user_notifications = list(chain(user_notifications_first, user_notifications_second))
             data = StoryUserSerializer(stories, many=True).data
         except CustomUser.DoesNotExist:
             data = {"error": "User not found"}
@@ -201,5 +203,41 @@ class GetStoryByID(AsyncJsonWebsocketConsumer):
                 "likes": story.likes.count(),
             }
         except UserStory.DoesNotExist:
+            data = {"error": "Story not found"}
+        return data
+
+
+class SelfUserStory(AsyncJsonWebsocketConsumer):
+    async def connect(self):
+        if self.scope['user'].is_anonymous:
+            await self.close()
+        else:
+            await self.accept()
+            await self.channel_layer.group_add(
+                f'get_self_stories_{self.scope["user"].id}',
+                self.channel_name
+            )
+            await self.channel_layer.group_send(
+                f'get_self_stories_{self.scope["user"].id}', {
+                    "type": "send_self_stories",
+                }
+            )
+
+    async def disconnect(self, code):
+        await self.close()
+
+    async def send_self_stories(self, event):
+        data = await self.get_self_stories()
+        await self.send_json({
+            "data": data
+        })
+
+    @database_sync_to_async
+    def get_self_stories(self):
+        stories = UserStory.objects.filter(user=self.scope['user']).order_by('-created_at').last()
+        if stories:
+            data = SelfStorySerializers(stories).data
+            return data
+        else:
             data = {"error": "Story not found"}
         return data

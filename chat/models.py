@@ -1,3 +1,5 @@
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db import models
 
 from posts.models import Post
@@ -13,6 +15,11 @@ class FileModel(models.Model):
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file_image = models.ImageField(upload_to='message_image/', null=True, blank=True)
 
+    class Meta:
+        ordering = ['-uploaded_at']
+        db_table = 'file_model'
+        verbose_name = 'Message File Model'
+
     def __str__(self):
         return self.name
 
@@ -23,6 +30,14 @@ class ChatRoom(models.Model):
     first_user_is_writing = models.BooleanField(default=False)
     second_user_is_writing = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        db_table = 'chat_room'
+        verbose_name = 'Chat Room'
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
 
     def __str__(self):
         return f"{self.first_user} and {self.second_user}"
@@ -46,7 +61,7 @@ class ChatRoom(models.Model):
         return self.chat_room.filter(message__message_type="voice").count()
 
     def get_document_messages(self):
-        return self.chat_room.filter(message__message_type__in=["word", "pdf", "excel"] )
+        return self.chat_room.filter(message__message_type__in=["word", "pdf", "excel"])
 
     def get_image_messages(self):
         return self.chat_room.filter(message__message_type="image")
@@ -85,20 +100,36 @@ class Message(models.Model):
     forward_post = models.ForeignKey(Post, on_delete=models.SET_NULL, related_name="forward_post_message", null=True, )
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # def __str__(self):
-    #     return self.message_type
+    class Meta:
+        ordering = ['-created_at']
+        db_table = 'message'
+        verbose_name = 'Message'
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return self.message_type
 
 
 class ChatMessage(models.Model):
     chat_room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name="chat_room")
     from_user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="from_user",
-                                  null=True, blank=True)
+                                  null=False, blank=False)
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="chat_message")
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # def __str__(self):
-    #     return self.chat.chat_room
+    class Meta:
+        ordering = ['-created_at']
+        db_table = 'chat_message'
+        verbose_name = 'Chat Message'
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return self.from_user.username
 
 
 class GroupChat(models.Model):
@@ -110,6 +141,11 @@ class GroupChat(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        db_table = 'group_chat'
+        verbose_name = 'Group Chat'
+        indexes = [
+            models.Index(fields=['group_name']),
+        ]
 
     def __str__(self):
         return self.group_name
@@ -126,36 +162,32 @@ class GroupChat(models.Model):
     def count_messages(self):
         return self.group_chat.count()
 
-    def count_unread_messages(self):
-        return self.group_chat.filter(is_read=False).count()
+    def unread_message_count(self, user):
+        return self.group_chat.exclude(read_users=user).count()
 
     def count_documents(self):
-        return self.group_chat.filter(message__file_type="document").count()
+        return self.group_chat.filter(message__message_type="document").count()
 
     def count_images(self):
-        return self.group_chat.filter(message__file_type="image").count()
+        return self.group_chat.filter(message__message_type="image").count()
 
     def count_videos(self):
-        return self.group_chat.filter(message__file_type="video").count()
+        return self.group_chat.filter(message__message_type="video").count()
 
     def count_voices(self):
-        return self.group_chat.filter(message__file_type="voice").count()
+        return self.group_chat.filter(message__message_type="voice").count()
 
     def get_document_messages(self):
-        return self.group_chat.filter(message__file_type="document"
-                                      ).values("message__document", "message__created_at")
+        return self.group_chat.filter(message__message_type="document")
 
     def get_image_messages(self):
-        return self.group_chat.filter(message__file_type="image"
-                                      ).values("message__image", "message__created_at")
+        return self.group_chat.filter(message__message_type="ïmage")
 
     def get_voice_messages(self):
-        return self.group_chat.filter(message__file_type="voice"
-                                      ).values("message__voice", "message__created_at")
+        return self.group_chat.filter(message__message_type="voice")
 
     def get_video_messages(self):
-        return self.group_chat.filter(message__file_type="video"
-                                      ).values("message__video", "message__created_at")
+        return self.group_chat.filter(message__message_type="video")
 
     def add_user(self, user):
         self.users.add(user)
@@ -171,6 +203,9 @@ class GroupChat(models.Model):
     def get_messages(self):
         return self.group_chat.all().order_by('created_at')
 
+    def get_last_added_user(self):
+        return self.users.last()
+
     def get_last_message(self):
         return self.group_chat.last()
 
@@ -181,6 +216,27 @@ class GroupChatMessage(models.Model):
                                   null=True, blank=True)
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="group_message")
     is_read = models.BooleanField(default=False)
+    read_users = models.ManyToManyField(CustomUser, related_name="group_message_read_users", blank=True)
 
-    def __str__(self):
-        return self.message
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        db_table = 'group_chat_message'
+        verbose_name = 'Group Chat Message'
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        super(GroupChatMessage, self).save(*args, **kwargs)
+
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            'group_chat_list', {
+                "type": "send_group_chat_list",
+            })
+        async_to_sync(channel_layer.group_send)(
+            f'group_chat_message_all_{self.group_chat.id}', {
+                "type": "send_group_chat_message_all",
+            })

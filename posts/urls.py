@@ -6,14 +6,16 @@ from .views import (
     GetUpdateDeleteComment,
     LikePost, SavedPostByUser,
     SavedPostGetAll,
+    AllCommentGetFotPost
 
 )
 
 urlpatterns = [
     path('create', CreatePost.as_view(), name='create_post'),
     path('<int:post_id>', GetUpdateDeletePost.as_view(), name='get_update_delete_post'),
-    path('comment/<int:post_id>', CreateComment.as_view(), name='create_comment'),
-    path('comment/<int:comment_id>', GetUpdateDeleteComment.as_view(), name='get_update_delete_comment'),
+    path('comment/create/<int:post_id>', CreateComment.as_view(), name='create_comment'),
+    path('comment/all/<int:post_id>', AllCommentGetFotPost.as_view(), name='all_comment_get_for_post'),
+    path('comment/detail/<int:comment_id>', GetUpdateDeleteComment.as_view(), name='get_update_delete_comment'),
     path('like/<int:post_id>', LikePost.as_view(), name='like_post'),
     path('saved/<int:post_id>', SavedPostByUser.as_view(), name='saved_post'),
     path('saved/post/all', SavedPostGetAll.as_view(), name='saved_post_get_all')

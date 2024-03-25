@@ -2,11 +2,12 @@ from django.shortcuts import get_object_or_404
 from rest_framework import response, status, views
 from posts.models import Post
 from users.models import CustomUser
-from .models import ChatRoom, ChatMessage, GroupChat, Message, FileModel
+from users.validate_functions import validate_list_for_item_int
+from .models import ChatRoom, ChatMessage, GroupChat, Message, FileModel, GroupChatMessage
 from users.models import Story
-from .celery_task_for_chat import create_message_pdf_image, create_message_excel_image
+from .celery_task_for_chat import create_message_pdf_image, create_message_excel_image, forward_post_task
 from .serializers import GroupChatSerializers, ChatMessageSerializers, MessageSerializers, FileModelSerializers, \
-    ChatMessageSerializersForMessageType
+    ChatMessageSerializersForMessageType, GroupChatMessageSerializersForMessageType
 
 
 class CreateChatRoom(views.APIView):
@@ -89,7 +90,7 @@ class CreateChatRoomMessage(views.APIView):
                             message=message
                         )
                         pdf_path = file_data.file.path
-                        create_message_pdf_image.delay(pdf_path, file_data.id, chat_message.id)
+                        create_message_pdf_image.delay(pdf_path, file_data.id, ChatMessage, chat_message.id)
                         return response.Response(status=status.HTTP_201_CREATED)
                     else:
                         error = "PDF file is required and it should be less than 10MB. You only can upload doc files."
@@ -118,7 +119,8 @@ class CreateChatRoomMessage(views.APIView):
                             chat_room=chat_room,
                             message=message
                         )
-                        create_message_excel_image.delay(file_data.file.path, file_data.id, chat_message.id)
+                        create_message_excel_image.delay(file_data.file.path, file_data.id, ChatMessage,
+                                                         chat_message.id)
                         return response.Response(status=status.HTTP_201_CREATED)
                     else:
                         error = "Excel file is required and it should be less than 10MB. You only can upload doc files."
@@ -358,12 +360,15 @@ class CreateGroupChat(views.APIView):
     def post(request):
         serializer_data = GroupChatSerializers(data=request.data)
         if serializer_data.is_valid():
+            if request.data.get("users") is None:
+                return response.Response({"error": "Users are required"}, status=status.HTTP_400_BAD_REQUEST)
+            user_list = request.data.get("users").split(",")
+            user_list = list(map(int, user_list))
             group_data = serializer_data.save(owner=request.user)
-            users = request.data.get("users")
-            get_all_user = CustomUser.objects.filter(id__in=users)
+            get_all_user = CustomUser.objects.filter(id__in=user_list)
             group_data.users.set(get_all_user)
             group_data.save()
-            return response.Response({"group_chat_id": group_data.id}, status=status.HTTP_201_CREATED)
+            return response.Response(status=status.HTTP_201_CREATED)
         else:
             return response.Response({"error": serializer_data.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -400,6 +405,226 @@ class GetGroupChat(views.APIView):
         return response.Response(serializer_data.data)
 
 
+class CreateGroupChatMessage(views.APIView):
+    @staticmethod
+    def post(request, group_chat_id):
+        group_chat = get_object_or_404(GroupChat, id=group_chat_id)
+        if request.user in group_chat.users.all():
+            message_type = request.data.get("message_type")
+            if message_type == "word":
+                word_file = request.FILES.get("word_file", None)
+                if word_file:
+                    file_type = word_file.name.split('.')[1]
+                    if word_file and file_type in ['docx', 'doc'] and word_file.size < 10 * 1024 * 1024:
+                        file_info = {
+                            "name": word_file.name,
+                            "size": word_file.size,
+                            "content_type": word_file.content_type,
+                            "file": word_file
+                        }
+                        file_data = FileModel.objects.create(**file_info)
+                        message = Message.objects.create(
+                            message_type="word",
+                            message_file=file_data
+                        )
+                        GroupChatMessage.objects.create(
+                            from_user=request.user,
+                            group_chat=group_chat,
+                            message=message
+                        )
+                        return response.Response(status=status.HTTP_201_CREATED)
+                    else:
+                        error = "Word file is required and it should be less than 10MB. You only can upload doc files."
+                        return response.Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return response.Response({"error": "Word file required"})
+            elif message_type == "pdf":
+                pdf_file = request.FILES.get("pdf_file", None)
+                if pdf_file:
+                    file_type = pdf_file.name.split('.')[1]
+                    if pdf_file and file_type in ['pdf'] and pdf_file.size < 10 * 1024 * 1024:
+                        file_info = {
+                            "name": pdf_file.name,
+                            "size": pdf_file.size,
+                            "content_type": pdf_file.content_type,
+                            "file": pdf_file
+                        }
+                        file_data = FileModel.objects.create(**file_info)
+                        message = Message.objects.create(
+                            message_type="pdf",
+                            message_file=file_data
+                        )
+                        chat_message = GroupChatMessage.objects.create(
+                            from_user=request.user,
+                            group_chat=group_chat,
+                            message=message
+                        )
+                        create_message_pdf_image.delay(file_data.file.path, file_data.id, chat_message.id,
+                                                       GroupChatMessage)
+                        return response.Response(status=status.HTTP_201_CREATED)
+                    else:
+                        error = "PDF file is required and it should be less than 10MB. You only can upload doc files."
+                        return response.Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return response.Response({"error": "PDF file required"})
+            elif message_type == "excel":
+                excel_file = request.FILES.get("excel_file", None)
+                if excel_file:
+                    file_type = excel_file.name.split('.')[1]
+                    if excel_file and file_type in ['xlsx'] and excel_file.size < 10 * 1024 * 1024:
+                        file_info = {
+                            "name": excel_file.name,
+                            "size": excel_file.size,
+                            "content_type": excel_file.content_type,
+                            "file": excel_file
+                        }
+                        file_data = FileModel.objects.create(**file_info)
+                        message = Message.objects.create(
+                            message_type="excel",
+                            message_file=file_data
+                        )
+                        chat_message = GroupChatMessage.objects.create(
+                            from_user=request.user,
+                            group_chat=group_chat,
+                            message=message
+                        )
+                        create_message_excel_image.delay(file_data.file.path, file_data.id, chat_message.id,
+                                                         GroupChatMessage)
+                        return response.Response(status=status.HTTP_201_CREATED)
+                    else:
+                        error = "Excel file is required and it should be less than 10MB. You only can upload doc files."
+                        return response.Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return response.Response({"error": "Excel file required"}, status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "image":
+                image_file = request.FILES.get("image_file", None)
+                if image_file and image_file.size < 10 * 1024 * 1024:
+                    file_info = {
+                        "name": image_file.name,
+                        "size": image_file.size,
+                        "content_type": image_file.content_type,
+                        "file": image_file
+                    }
+                    file_data = FileModel.objects.create(**file_info)
+                    message = Message.objects.create(
+                        message_type="image",
+                        message_file=file_data
+                    )
+                    GroupChatMessage.objects.create(
+                        from_user=request.user,
+                        group_chat=group_chat,
+                        message=message
+                    )
+                    return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    error = "Image file is required and it should be less than 10MB."
+                    return response.Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "voice":
+                voice_file = request.FILES.get("voice_file", None)
+                if voice_file:
+                    if voice_file and voice_file.size < 10 * 1024 * 1024:
+                        file_info = {
+                            "name": voice_file.name,
+                            "size": voice_file.size,
+                            "content_type": voice_file.content_type,
+                            "file": voice_file
+                        }
+                        file_data = FileModel.objects.create(**file_info)
+                        message = Message.objects.create(
+                            message_type="voice",
+                            message_file=file_data
+                        )
+                        GroupChatMessage.objects.create(
+                            from_user=request.user,
+                            group_chat=group_chat,
+                            message=message
+                        )
+                        return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    return response.Response({"error": "Vocie file required!"})
+            elif message_type == "video":
+                video_file = request.FILES.get("video_file", None)
+                if video_file and video_file.content_type == "video/mp4" and video_file.size < 10 * 1024 * 1024:
+                    file_info = {
+                        "name": video_file.name,
+                        "size": video_file.size / (1024 * 1024),
+                        "content_type": video_file.content_type,
+                        "file": video_file
+                    }
+                    file_data = FileModel.objects.create(**file_info)
+
+                    message = Message.objects.create(
+                        message_type="video",
+                        message_file=file_data
+                    )
+                    GroupChatMessage.objects.create(
+                        from_user=request.user,
+                        group_chat=group_chat,
+                        message=message
+                    )
+                    return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    error = "Video file is required and it should be less than 10MB. You only can upload mp4 files."
+                    return response.Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "text":
+                message_text = request.data.get("message_text", None)
+                if message_text and len(message_text) > 0:
+                    message = Message.objects.create(
+                        message_type="text",
+                        message=message_text
+                    )
+                    GroupChatMessage.objects.create(
+                        from_user=request.user,
+                        group_chat=group_chat,
+                        message=message
+                    )
+                    return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    return response.Response({"error": "Message text is required"},
+                                             status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "story":
+                return response.Response({"error": "You can't send story in group chat"},
+                                         status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "forward_message":
+                forward_message_id = request.data.get("forward_message_id", None)
+                if forward_message_id:
+                    forward_message = get_object_or_404(Message, id=forward_message_id)
+                    message = Message.objects.create(
+                        message_type="forward_message",
+                        forward_message=forward_message
+                    )
+                    GroupChatMessage.objects.create(
+                        from_user=request.user,
+                        group_chat=group_chat,
+                        message=message
+                    )
+                    return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    return response.Response({"error": "Forward message id is required"},
+                                             status=status.HTTP_400_BAD_REQUEST)
+            elif message_type == "forward_post":
+                forward_post_id = request.data.get("forward_post_id", None)
+                if forward_post_id:
+                    forward_post = get_object_or_404(Post, id=forward_post_id)
+                    message = Message.objects.create(
+                        message_type="forward_post",
+                        forward_post=forward_post
+                    )
+                    GroupChatMessage.objects.create(
+                        from_user=request.user,
+                        group_chat=group_chat,
+                        message=message
+                    )
+                    return response.Response(status=status.HTTP_201_CREATED)
+                else:
+                    return response.Response({"error": "Forward post id is required"},
+                                             status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return response.Response({"error": "Invalid message type"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return response.Response({"error": "You can't message this Group! Please Subscribe this group."})
+
+
 class GetGroupChatMessagesByMessageType(views.APIView):
     @staticmethod
     def get(request, group_id):
@@ -428,3 +653,66 @@ class GetGroupChatMessagesByMessageType(views.APIView):
         else:
             return response.Response({"error": "You are not allowed to see this group chat messages"},
                                      status=status.HTTP_403_FORBIDDEN)
+
+
+class AddUserToGroupChat(views.APIView):
+    @staticmethod
+    def get(request, group_chat_id):
+        group_chat = get_object_or_404(GroupChat, id=group_chat_id)
+        if request.user in group_chat.get_users():
+            group_chat.remove_user(request.user)
+            return response.Response(status=status.HTTP_400_BAD_REQUEST)
+        else:
+            group_chat.add_user(request.user)
+            return response.Response(status=status.HTTP_201_CREATED)
+
+
+class MessageByMessageTypeForGroupChat(views.APIView):
+    @staticmethod
+    def get(request, group_chat_id):
+        chat_room = get_object_or_404(GroupChat, id=group_chat_id)
+        if request.user in chat_room.users.all():
+            message_type = request.query_params.get("message_type")
+            if message_type == "document":
+                messages = chat_room.get_document_messages()
+                message_count = chat_room.count_documents()
+            elif message_type == "image":
+                messages = chat_room.get_image_messages()
+                message_count = chat_room.count_images()
+            elif message_type == "voice":
+                messages = chat_room.get_voice_messages()
+                message_count = chat_room.count_voices()
+            elif message_type == "video":
+                messages = chat_room.get_video_messages()
+                message_count = chat_room.count_videos()
+            else:
+                return response.Response({"error": "Invalid message type"}, status=status.HTTP_400_BAD_REQUEST)
+            data = {
+                "messages": GroupChatMessageSerializersForMessageType(messages, many=True).data,
+                "message_count": message_count
+            }
+            return response.Response(data, status=status.HTTP_200_OK)
+
+        else:
+            return response.Response({"error": "You are not allowed to see this chat room messages"},
+                                     status=status.HTTP_403_FORBIDDEN)
+
+
+class CreateForwardPost(views.APIView):
+    @staticmethod
+    def post(request):
+        users = request.data.get("users", None)
+        post_id = request.data.get("post_id")
+        if users is None:
+            return response.Response({"error": "Users are required"}, status=status.HTTP_400_BAD_REQUEST)
+        if post_id is None:
+            return response.Response({"error": "Post id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        users = users.split(',')
+        users = [int(user) for user in users]
+        if not validate_list_for_item_int(users):
+            return response.Response({"error": "The users must be a list of integers"},
+                                     status=status.HTTP_400_BAD_REQUEST)
+        post = get_object_or_404(Post, id=post_id)
+        from_user = request.user
+        forward_post_task.delay(post, from_user, users)
+        return response.Response(status=status.HTTP_201_CREATED)

@@ -12,6 +12,14 @@ class Post(models.Model):
     author = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     likes = models.ManyToManyField(CustomUser, related_name='post_likes', blank=True)
 
+    class Meta:
+        ordering = ['-date_posted']
+        db_table = 'post'
+        verbose_name = 'Post'
+        indexes = [
+            models.Index(fields=['title']),
+        ]
+
     def __str__(self):
         return self.title
 
@@ -30,13 +38,29 @@ class Post(models.Model):
     def get_likes(self):
         return self.likes.all()[:3]
 
+    def get_last_like_user(self):
+        return self.likes.last()
+
+    def get_last_three_like_user_image_url(self):
+        return [
+            user.get_user_last_image().photo.url
+            if user.get_user_last_image() else ""
+            for user in self.likes.all()[:3]
+        ]
+
+
+
+    def time_ago(self):
+        from django.utils.timesince import timesince
+        return timesince(self.date_posted)
+
     def save(self, *args, **kwargs):
         super(Post, self).save(*args, **kwargs)
 
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             'following_post_all', {
-                "type": "send_following_post",
+                "type": "send_following_posts",
             })
 
 
@@ -44,6 +68,13 @@ class SavedPost(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='saved_post')
     date_saved = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'saved_post'
+        verbose_name = 'Saved Post'
+        indexes = [
+            models.Index(fields=['user']),
+        ]
 
     def __str__(self):
         return self.user.username + " saved " + self.post.title
@@ -58,6 +89,12 @@ class CommentPost(models.Model):
     comment = models.TextField(max_length=500, blank=False, null=False, validators=[validate_comment_length])
     date_commented = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = 'comment_post'
+        verbose_name = 'Comment Post'
+        indexes = [
+            models.Index(fields=['user']),
+        ]
+
     def __str__(self):
         return self.user.username + " commented on " + self.post.title
-

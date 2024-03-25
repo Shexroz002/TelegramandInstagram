@@ -1,20 +1,31 @@
 from rest_framework import serializers
-from .models import CustomUser, Story, UserStory
+from .models import CustomUser, Story, UserStory, ProfileImage
 from .validate_functions import validate_password, validate_image_type
+
+
+class ProfileImageSerializers(serializers.ModelSerializer):
+    class Meta:
+        model = ProfileImage
+        fields = ['id', 'photo', 'date']
+
+
+class SelfUserSerializers(serializers.ModelSerializer):
+    user_image = ProfileImageSerializers(many=True, read_only=True)
+
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'user_image']
 
 
 class CustomUserSerializers(serializers.ModelSerializer):
     followers = serializers.StringRelatedField(many=True, read_only=True)
     following = serializers.StringRelatedField(many=True, read_only=True)
-    password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
-    user_image = serializers.ImageField(required=False, validators=[validate_image_type])
+    user_image = ProfileImageSerializers(many=True, read_only=True)
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'password', 'email', 'user_image', 'user_bio', 'user_birth_date', 'followers',
-                  'following', ]
+        fields = ['id', 'username', 'email', 'user_image', 'user_bio', 'user_birth_date', 'followers', 'following', ]
         extra_kwargs = {
-            'password': {'write_only': True, 'required': True},
             'user_image': {'required': False},
             'user_bio': {'required': False},
             'user_birth_date': {'required': False},
@@ -28,6 +39,11 @@ class UserForComments(serializers.ModelSerializer):
         model = CustomUser
         fields = ['id', 'username', 'user_image', ]
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['user_image'] = instance.get_user_last_image().photo.url if instance.get_user_last_image() else ""
+        return ret
+
 
 class StorySerializers(serializers.ModelSerializer):
     class Meta:
@@ -37,7 +53,28 @@ class StorySerializers(serializers.ModelSerializer):
 
 class StoryUserSerializer(serializers.ModelSerializer):
     story = StorySerializers(read_only=True)
+    user = UserForComments(read_only=True)
 
     class Meta:
         model = UserStory
-        fields = "__all__"
+        fields = ['id', 'story', 'user', 'created_at']
+
+
+class SelfStorySerializers(serializers.ModelSerializer):
+    story = StorySerializers(read_only=True)
+    time_ago = serializers.CharField()
+
+    class Meta:
+        model = UserStory
+        fields = ['id', 'story', 'likes', 'time_ago']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['story_detail'] = {
+            "user_seen": UserForComments(instance.seen_user.all(), many=True).data,
+            "likes": instance.likes.count(),
+            "user_seen_count": instance.seen_user.count(),
+            # "story_created_at": instance.created_at,
+        }
+
+        return ret

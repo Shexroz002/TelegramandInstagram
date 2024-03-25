@@ -26,7 +26,13 @@ class CommentPostSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CommentPost
-        fields = ['user', 'comment', 'date_commented']
+        fields = ['user', 'comment', 'date_commented', 'id']
+        extra_kwargs = {
+            'comment': {'required': True},
+            'user': {'required': False},
+            'date_commented': {'required': False}
+
+        }
 
 
 class SavedPostSerializer(serializers.ModelSerializer):

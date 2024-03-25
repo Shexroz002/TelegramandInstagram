@@ -3,7 +3,8 @@ from .consumers import (
     UserInformationByID,
     FollowingUserStories,
     UserStoryByID,
-    GetStoryByID
+    GetStoryByID,
+    SelfUserStory
 )
 from django.urls import path
 
@@ -12,5 +13,6 @@ websocket_urlpatterns = [
     path('information/<int:user_id>', UserInformationByID.as_asgi()),
     path('stories', FollowingUserStories.as_asgi()),
     path('stories/<int:user_id>', UserStoryByID.as_asgi()),
-    path('story/<int:story_id>', GetStoryByID.as_asgi())
+    path('story/<int:story_id>', GetStoryByID.as_asgi()),
+    path('self/stories', SelfUserStory.as_asgi()),
 ]
